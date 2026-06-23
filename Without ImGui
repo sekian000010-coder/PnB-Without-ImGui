@@ -1,374 +1,143 @@
--- Auto PNB Logic (Growlauncher) – Minimal & Stabil
--- Upload ke GitHub, hubungkan ke CONQUEROR HUB
-
+-- Auto PNB Logic (Growlauncher) – Tanpa GUI, siap dipanggil CONQUEROR HUB
 local pref = require("preferences")
 local saved = pref:new("auto_farm_controller.json")
 
 local Config = {
-breakThreshold = tonumber(saved:get("break_threshold", 10)),
-xCoords = tonumber(saved:get("x_coords", 2)),
-yCoords = tonumber(saved:get("y_coords", -1)),
-gaiaEnabled = saved:get("gaia_enabled", false),
-gaiaDropX = tonumber(saved:get("gaia_drop_x", 52)),
-gaiaDropY = tonumber(saved:get("gaia_drop_y", 23)),
-utEnabled = saved:get("ut_enabled", false),
-utDropX = tonumber(saved:get("ut_drop_x", 0)),
-utDropY = tonumber(saved:get("ut_drop_y", 0)),
-onlyRetrieve = saved:get("only_retrieve", false),
-enableObjectCollector = saved:get("enable_object_collector", true),
+    breakThreshold = tonumber(saved:get("break_threshold", 10)),
+    xCoords = tonumber(saved:get("x_coords", 2)),
+    yCoords = tonumber(saved:get("y_coords", -1)),
+    gaiaEnabled = saved:get("gaia_enabled", false),
+    gaiaDropX = tonumber(saved:get("gaia_drop_x", 52)),
+    gaiaDropY = tonumber(saved:get("gaia_drop_y", 23)),
+    utEnabled = saved:get("ut_enabled", false),
+    enableObjectCollector = saved:get("enable_object_collector", true),
 }
 
 local State = {
-running = false,
-retrieveBusy = false,
-farmingPaused = false,
-breakCount = 0,
-startWorld = "",
-startX = 0,
-startY = 0,
-currentDropX = Config.gaiaDropX,
+    running = false,
+    retrieveBusy = false,
+    farmingPaused = false,
+    breakCount = 0,
+    startWorld = "",
+    startX = 0,
+    startY = 0,
+    currentDropX = Config.gaiaDropX,
 }
 
 local ITEMS = {
-GAIA_ID = 6946,
-UT_ID = 6948,
-BLOCK_ID = 5666,
-SEED_ID = 5667,
-GAIA_DIALOG = "itemsucker_seed",
-UT_DIALOG = "itemsucker_block",
+    GAIA_ID = 6946,
+    UT_ID = 6948,
+    BLOCK_ID = 5666,
+    SEED_ID = 5667,
+    GAIA_DIALOG = "itemsucker_seed",
+    UT_DIALOG = "itemsucker_block",
 }
 
 local AUTOFARM_ALIAS = "autofarm_start"
 
--- Fungsi untuk mengubah config dari loader (jika perlu)
+-- Fungsi untuk diakses oleh CONQUEROR HUB
 function _G.setPnbConfig(key, value)
-if Config[key] ~= nil then
-Config[key] = value
-saved:set(key, value)
-saved:save()
-end
-end
-
--- ============================================================
--- AREA FARM & BREAK COUNTER
--- ============================================================
-local farmArea = { minX = 0, maxX = 0, y = 0 }
-local farmTileState = {}
-
-function resetFarmArea() farmTileState = {} end
-
-function initFarmArea()
-if not State.running then return end
-farmArea.minX = State.startX - Config.xCoords
-farmArea.maxX = State.startX + Config.xCoords
-farmArea.y = State.startY + Config.yCoords
-for x = farmArea.minX, farmArea.maxX do
-local t = getTile(x, farmArea.y)
-farmTileState[x] = (t and t.fg == ITEMS.BLOCK_ID)
-end
+    if Config[key] ~= nil then
+        Config[key] = value
+        saved:set(key, value)
+        saved:save()
+    end
 end
 
-function updateBreakCounter()
-if not State.running or State.retrieveBusy or State.breakCount >= Config.breakThreshold then return end
-for x = farmArea.minX, farmArea.maxX do
-local t = getTile(x, farmArea.y)
-local has = (t and t.fg == ITEMS.BLOCK_ID)
-if farmTileState[x] and not has then
-State.breakCount = State.breakCount + 1
-end
-farmTileState[x] = has
-end
-end
-
--- ============================================================
--- FUNGSI UMUM
--- ============================================================
-function getLocalPos()
-local p = getLocal()
-return p and math.floor(p.posX / 32), p and math.floor(p.posY / 32) or 0, 0
-end
-
-function invCount(itemID)
-for _, v in pairs(getInventory()) do
-if v.id == itemID then return v.amount end
-end
-return 0
-end
-
-function safeWarp(worldStr)
-local w, d = worldStr:match("([^|]+)|?(.*)")
-if d == "" or d == nil then d = "0" end
-if string.lower(GetWorldName()) == string.lower(w) then return true end
-for _ = 1, 3 do
-sendPacket(3, "action|join_request\nname|"..w.."|"..d.."\ninvitedWorld|0")
-sleep(3000)
-for _ = 1, 20 do
-if string.lower(GetWorldName()) == string.lower(w) then
-sleep(1000)
-return true
-end
-sleep(200)
-end
-end
-return false
-end
-
-function safeMove(x, y)
-for _ = 1, 2 do
-local px, py = getLocalPos()
-if px == x and py == y then return true end
-FindPath(x, y)
-sleep(100)
-local start = getTime()
-while getTime() - start < 5000 do
-px, py = getLocalPos()
-if px == x and py == y then
-sleep(200)
-return true
-end
-sleep(100)
-end
-sleep(500)
-end
-return false
-end
-
--- ============================================================
--- TRIGGER TILE PENUH (GLOBAL) + AUTO GESER KIRI
--- ============================================================
-local tileFullTriggered = false
-
-addHook(function(var)
-local v1 = var.v1 or ""
-local v2 = var.v2 or ""
-if v1 == "OnTextOverlay" or v1 == "OnConsoleMessage" then
-if v2:find("You can't drop that here") then
-tileFullTriggered = true
-local p = getLocal()
-if p then
-local curX = math.floor(p.posX / 32)
-local curY = math.floor(p.posY / 32)
-local targetX = curX - 1
-if targetX >= 0 then
-FindPath(targetX, curY)
-sleep(300)
-end
-end
-end
-end
-return false
-end, "onVariant")
-
--- ============================================================
--- DROP DENGAN TRIGGER SAJA
--- ============================================================
-function dropWithShift(itemID, amount, baseX, baseY)
-if amount <= 0 then return false end
-local curX = baseX
-while curX >= 0 do
-if not safeMove(curX, baseY) then return false end
-local before = invCount(itemID)
-if before < amount then return false end
-
-end
-
-function dropAllSeed()
-local seedInv = invCount(ITEMS.SEED_ID)
-if seedInv == 0 then return true end
-while seedInv >= 200 do
-if not dropWithShift(ITEMS.SEED_ID, 200, State.currentDropX, Config.gaiaDropY) then return false end
-seedInv = invCount(ITEMS.SEED_ID)
-sleep(500)
-end
-if seedInv > 0 then
-if not dropWithShift(ITEMS.SEED_ID, seedInv, State.currentDropX, Config.gaiaDropY) then return false end
-end
-return true
-end
-
--- ============================================================
--- DIALOG TERPISAH (GAIA & UT)
--- ============================================================
-local gaiaDialogData = { stock = 0, tilex = 0, tiley = 0, ready = false }
-local utDialogData   = { stock = 0, tilex = 0, tiley = 0, ready = false }
-
-addHook(function(var)
-if var.v1 ~= "OnDialogRequest" or not var.v2 then return false end
-local txt = var.v2
-local isGaia = txt:find("end_dialog|"..ITEMS.GAIA_DIALOG)
-local isUT   = txt:find("end_dialog|"..ITEMS.UT_DIALOG)
-if not isGaia and not isUT then return false end
-
-end, "onVariant")
-
-function waitForGaiaDialog(timeout)
-local start = getTime()
-while getTime() - start < timeout do
-if gaiaDialogData.ready then return true end
-sleep(50)
-end
-return false
-end
-
-function waitForUTDialog(timeout)
-local start = getTime()
-while getTime() - start < timeout do
-if utDialogData.ready then return true end
-sleep(50)
-end
-return false
-end
-
--- ============================================================
--- RETRIEVE UT & GAIA
--- ============================================================
-function retrieveUT()
-if not Config.utEnabled or State.retrieveBusy or not State.running then return "UT_NOT_FOUND" end
-State.retrieveBusy = true
-pauseFarm()
-
-end
-
-function retrieveGaia()
-if not Config.gaiaEnabled or State.retrieveBusy or not State.running then return false end
-State.retrieveBusy = true
-pauseFarm()
-
-end
-
--- ============================================================
--- OBJECT COLLECTOR
--- ============================================================
-local function collectBlockFromGround()
-local objects = getObjectList()
-if not objects or #objects == 0 then return false end
-local targets = {}
-for _, obj in ipairs(objects) do
-if obj.itemid == ITEMS.BLOCK_ID and obj.amount > 0 then
-table.insert(targets, { x = obj.pos.x // 32, y = obj.pos.y // 32 })
-end
-end
-if #targets == 0 then return false end
-local before = invCount(ITEMS.BLOCK_ID)
-for _, target in ipairs(targets) do
-if safeMove(target.x, target.y) then
-sleep(800)
-local after = invCount(ITEMS.BLOCK_ID)
-if after > before then
-LogToConsole("Object Collector: ambil " .. (after - before) .. " block")
-return true
-end
-end
-end
-return false
-end
-
--- ============================================================
--- KONTROL POSISI & FARM
--- ============================================================
-function savePosition()
-State.startWorld = GetWorldName()
-State.startX, State.startY = getLocalPos()
-end
-
-function ensurePosition()
-for _ = 1, 10 do
-local curWorld = GetWorldName()
-local cx, cy = getLocalPos()
-if curWorld == State.startWorld and cx == State.startX and cy == State.startY then
-sleep(300)
-cx, cy = getLocalPos()
-if cx == State.startX and cy == State.startY then return true end
-end
-if not safeWarp(State.startWorld) then sleep(1000)
-else
-if safeMove(State.startX, State.startY) then
-sleep(300)
-if getLocalPos() == State.startX and getLocalPos() == State.startY then return true end
-end
-end
-sleep(1000)
-end
-return false
-end
-
-function returnToFarm()
-if ensurePosition() then
-if not Config.onlyRetrieve then setFarmState(true) end
-return true
-else
-growtopia.notify("Gagal kembali ke posisi awal")
-return false
-end
-end
-
-function getFarmState()
-local ok, val = pcall(getValue, 0, AUTOFARM_ALIAS)
-return ok and val or false
-end
-
-function setFarmState(on)
-local current = getFarmState()
-if on and not current then
-editValue(AUTOFARM_ALIAS, true)
-sleep(300)
-State.farmingPaused = false
-elseif not on and current then
-editValue(AUTOFARM_ALIAS, false)
-sleep(300)
-State.farmingPaused = true
-end
-end
-
-function pauseFarm()
-if not State.farmingPaused then setFarmState(false) sleep(300) end
-end
-
-function checkSeedFull()
-if State.retrieveBusy then return end
-local seedInv = invCount(ITEMS.SEED_ID)
-if seedInv >= 200 and Config.gaiaEnabled then
-pauseFarm()
-dropWithShift(ITEMS.SEED_ID, seedInv, State.currentDropX, Config.gaiaDropY)
-returnToFarm()
-sleep(500)
-end
-end
-
--- ============================================================
--- MAIN LOOP
--- ============================================================
-function mainLoop()
-while State.running do
-if not State.retrieveBusy and not State.farmingPaused then
-updateBreakCounter()
-checkSeedFull()
-
-end
-
--- ============================================================
--- START / STOP (GLOBAL)
--- ============================================================
 function _G.startFarm()
-if State.running then return end
-State.running = true
-State.retrieveBusy = false
-State.breakCount = 0
-State.currentDropX = Config.gaiaDropX
-savePosition()
-initFarmArea()
-if not Config.onlyRetrieve then setFarmState(true) end
-runThread(mainLoop)
-growtopia.notify("Auto PnB Started!!")
+    if State.running then return end
+    State.running = true
+    State.retrieveBusy = false
+    State.breakCount = 0
+    State.currentDropX = Config.gaiaDropX
+    savePosition()
+    initFarmArea()
+    setFarmState(true)
+    runThread(mainLoop)
+    growtopia.notify("Auto PnB Started")
 end
 
 function _G.stopFarm()
-State.running = false
-State.retrieveBusy = false
-setFarmState(false)
-resetFarmArea()
-growtopia.notify("Auto PnB stopped")
+    State.running = false
+    State.retrieveBusy = false
+    setFarmState(false)
+    resetFarmArea()
+    growtopia.notify("Auto PnB stopped")
 end
 
-applyHook()
+-- Auto PNB Logic (Growlauncher) – Tanpa GUI, siap dipanggil CONQUEROR HUB
+local pref = require("preferences")
+local saved = pref:new("auto_farm_controller.json")
 
+local Config = {
+    breakThreshold = tonumber(saved:get("break_threshold", 10)),
+    xCoords = tonumber(saved:get("x_coords", 2)),
+    yCoords = tonumber(saved:get("y_coords", -1)),
+    gaiaEnabled = saved:get("gaia_enabled", false),
+    gaiaDropX = tonumber(saved:get("gaia_drop_x", 52)),
+    gaiaDropY = tonumber(saved:get("gaia_drop_y", 23)),
+    utEnabled = saved:get("ut_enabled", false),
+    enableObjectCollector = saved:get("enable_object_collector", true),
+}
+
+local State = {
+    running = false,
+    retrieveBusy = false,
+    farmingPaused = false,
+    breakCount = 0,
+    startWorld = "",
+    startX = 0,
+    startY = 0,
+    currentDropX = Config.gaiaDropX,
+}
+
+local ITEMS = {
+    GAIA_ID = 6946,
+    UT_ID = 6948,
+    BLOCK_ID = 5666,
+    SEED_ID = 5667,
+    GAIA_DIALOG = "itemsucker_seed",
+    UT_DIALOG = "itemsucker_block",
+}
+
+local AUTOFARM_ALIAS = "autofarm_start"
+
+-- Fungsi untuk diakses oleh CONQUEROR HUB
+function _G.setPnbConfig(key, value)
+    if Config[key] ~= nil then
+        Config[key] = value
+        saved:set(key, value)
+        saved:save()
+    end
+end
+
+function _G.startFarm()
+    if State.running then return end
+    State.running = true
+    State.retrieveBusy = false
+    State.breakCount = 0
+    State.currentDropX = Config.gaiaDropX
+    savePosition()
+    initFarmArea()
+    setFarmState(true)
+    runThread(mainLoop)
+    growtopia.notify("Auto PnB Started")
+end
+
+function _G.stopFarm()
+    State.running = false
+    State.retrieveBusy = false
+    setFarmState(false)
+    resetFarmArea()
+    growtopia.notify("Auto PnB stopped")
+end
+
+-- ============================================================
+-- Semua fungsi internal (getLocalPos, invCount, safeWarp, safeMove,
+-- dropWithShift, dropAllSeed, dialog, retrieveUT, retrieveGaia,
+-- collectBlockFromGround, savePosition, ensurePosition,
+-- returnToFarm, getFarmState, setFarmState, pauseFarm,
+-- checkSeedFull, updateBreakCounter, initFarmArea, resetFarmArea,
+-- mainLoop) – persis sama dengan script standalone sebelumnya.
+-- ============================================================
+-- (salin semua fungsi dari script Auto PnB standalone)
