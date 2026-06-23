@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PNB LOGIC (Growlauncher) – TANPA GUI
+-- AUTO PNB LOGIC (Growlauncher) – TANPA GUI + ITEM PICKER + STATUS
 -- ============================================================
 local pref = require("preferences")
 local json = require("json")
@@ -17,6 +17,9 @@ local Config = {
     utDropY = tonumber(saved:get("ut_drop_y", 0)),
     onlyRetrieve = saved:get("only_retrieve", false),
     enableObjectCollector = saved:get("enable_object_collector", true),
+    -- ITEM PICKER: ID block yang akan difarm (default Laser Grid = 5666)
+    blockItemID = tonumber(saved:get("block_item_id", 5666)) or 5666,
+    blockSeedID = tonumber(saved:get("block_seed_id", 5667)) or 5667,
 }
 
 local State = {
@@ -33,13 +36,48 @@ local State = {
 local ITEMS = {
     GAIA_ID = 6946,
     UT_ID = 6948,
-    BLOCK_ID = 5666,
-    SEED_ID = 5667,
+    BLOCK_ID = Config.blockItemID,
+    SEED_ID = Config.blockSeedID,
     GAIA_DIALOG = "itemsucker_seed",
     UT_DIALOG = "itemsucker_block",
 }
 
 local AUTOFARM_ALIAS = "autofarm_start"
+
+-- ============================================================
+-- EXPORT FUNCTIONS UNTUK LOADER
+-- ============================================================
+function _G.setPnbConfig(key, value)
+    if key == "blockItemID" then
+        Config.blockItemID = tonumber(value) or 5666
+        Config.blockSeedID = Config.blockItemID + 1
+        ITEMS.BLOCK_ID = Config.blockItemID
+        ITEMS.SEED_ID = Config.blockSeedID
+        saved:set("block_item_id", Config.blockItemID)
+        saved:set("block_seed_id", Config.blockSeedID)
+        saved:save()
+    elseif Config[key] ~= nil then
+        Config[key] = value
+        saved:set(key, value)
+        saved:save()
+    end
+end
+
+function _G.getBreakCount()
+    return State.breakCount
+end
+
+function _G.getBlockInv()
+    return invCount(ITEMS.BLOCK_ID)
+end
+
+function _G.getSeedInv()
+    return invCount(ITEMS.SEED_ID)
+end
+
+function _G.isFarmRunning()
+    return State.running
+end
 
 -- ============================================================
 -- AREA FARM & BREAK COUNTER
