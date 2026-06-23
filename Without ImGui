@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PNB LOGIC (Growlauncher) – TANPA GUI & TANPA ITEM PICKER
+-- AUTO PNB LOGIC (Growlauncher) – TANPA GUI (TRIGGER‑BASED DROP)
 -- ============================================================
 local pref = require("preferences")
 local json = require("json")
@@ -41,6 +41,9 @@ local ITEMS = {
 
 local AUTOFARM_ALIAS = "autofarm_start"
 
+-- ============================================================
+-- EXPORT FUNCTIONS UNTUK LOADER
+-- ============================================================
 function _G.setPnbConfig(key, value)
     if Config[key] ~= nil then
         Config[key] = value
@@ -550,4 +553,7 @@ function _G.stopFarm()
     growtopia.notify("Auto PnB stopped")
 end
 
+-- ============================================================
+-- INISIALISASI
+-- ============================================================
 applyHook()
