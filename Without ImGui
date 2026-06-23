@@ -650,17 +650,7 @@ end)
 
 growtopia.notify("Auto Farm Controller ready (Trigger‑Only Drop)")
 
--- ========== SIMPAN UI UNTUK LOADER ==========
+-- ========== SIMPAN UI UNTUK LOADER (TANPA UNLOAD) ==========
 _G.pnbUI = ui:generateJSON()
-
--- ========== FUNGSI UNLOAD ==========
-function _G.unloadPnb()
-    if State.running then
-        State.running = false
-        setFarmState(false)
-        resetFarmArea()
-    end
-    LogToConsole("[PNB] Unloaded")
-end
 
 applyHook()
