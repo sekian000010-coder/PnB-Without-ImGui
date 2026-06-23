@@ -647,17 +647,7 @@ runCoroutine(function()
     sleep(1000)
     updateStatus(true)
 end)
--- Simpan UI untuk Loader
-_G.pnbUI = ui:generateJSON()
 
--- Fungsi unload (opsional, untuk membersihkan hook)
-function _G.unloadPnb()
-    if State.running then
-        State.running = false
-        setFarmState(false)
-        resetFarmArea()
-    end
-    LogToConsole("[PNB] Unloaded")
 end
 
 growtopia.notify("Auto Farm Controller ready (Trigger‑Only Drop)")
