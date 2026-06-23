@@ -65,6 +65,9 @@ end
 
 loadConfig()
 
+-- ============================================================
+-- AREA FARM & BREAK COUNTER
+-- ============================================================
 local farmArea = { minX = 0, maxX = 0, y = 0 }
 local farmTileState = {}
 
@@ -93,6 +96,9 @@ function updateBreakCounter()
     end
 end
 
+-- ============================================================
+-- FUNGSI UMUM
+-- ============================================================
 function getLocalPos()
     local p = getLocal()
     return p and math.floor(p.posX / 32), p and math.floor(p.posY / 32) or 0, 0
@@ -143,6 +149,9 @@ function safeMove(x, y)
     return false
 end
 
+-- ============================================================
+-- TRIGGER TILE PENUH (GLOBAL) + AUTO GESER KIRI
+-- ============================================================
 local tileFullTriggered = false
 
 addHook(function(var)
@@ -166,6 +175,9 @@ addHook(function(var)
     return false
 end, "onVariant")
 
+-- ============================================================
+-- DROP DENGAN TRIGGER SAJA
+-- ============================================================
 function dropWithShift(itemID, amount, baseX, baseY)
     if amount <= 0 then return false end
     local curX = baseX
@@ -207,6 +219,9 @@ function dropAllSeed()
     return true
 end
 
+-- ============================================================
+-- DIALOG TERPISAH (GAIA & UT)
+-- ============================================================
 local gaiaDialogData = { stock = 0, tilex = 0, tiley = 0, ready = false }
 local utDialogData   = { stock = 0, tilex = 0, tiley = 0, ready = false }
 
@@ -253,16 +268,35 @@ function waitForUTDialog(timeout)
     return false
 end
 
+-- ============================================================
+-- RETRIEVE UT (DIPERBAIKI – COBA 4 ARAH)
+-- ============================================================
 function retrieveUT()
     if not Config.utEnabled or State.retrieveBusy or not State.running then return "UT_NOT_FOUND" end
     State.retrieveBusy = true
     pauseFarm()
+
     local utX, utY = nil, nil
     for _, t in pairs(getTiles()) do
         if t and t.fg == ITEMS.UT_ID then utX, utY = t.x, t.y break end
     end
     if not utX then State.retrieveBusy = false; return "UT_NOT_FOUND" end
-    if not safeMove(utX, utY - 1) then State.retrieveBusy = false; return "UT_ERROR" end
+
+    -- Coba 4 arah: bawah, kiri, kanan, atas
+    local offsets = { {0,-1}, {-1,0}, {1,0}, {0,1} }
+    local moved = false
+    for _, off in ipairs(offsets) do
+        local tx, ty = utX + off[1], utY + off[2]
+        if safeMove(tx, ty) then
+            moved = true
+            break
+        end
+    end
+    if not moved then
+        State.retrieveBusy = false
+        return "UT_ERROR"
+    end
+
     utDialogData.ready = false
     local p = getLocal()
     sendPacketRaw(false, { type = 3, value = 32, px = utX, py = utY, x = p.posX, y = p.posY })
@@ -298,6 +332,9 @@ function retrieveUT()
     end
 end
 
+-- ============================================================
+-- RETRIEVE GAIA (TIDAK BERUBAH)
+-- ============================================================
 function retrieveGaia()
     if not Config.gaiaEnabled or State.retrieveBusy or not State.running then return false end
     State.retrieveBusy = true
@@ -339,6 +376,9 @@ function retrieveGaia()
     return true
 end
 
+-- ============================================================
+-- OBJECT COLLECTOR
+-- ============================================================
 local function collectBlockFromGround()
     local objects = getObjectList()
     if not objects or #objects == 0 then return false end
@@ -360,6 +400,9 @@ local function collectBlockFromGround()
     return false
 end
 
+-- ============================================================
+-- KONTROL POSISI & FARM
+-- ============================================================
 function savePosition()
     State.startWorld = GetWorldName()
     State.startX, State.startY = getLocalPos()
@@ -429,6 +472,9 @@ function checkSeedFull()
     end
 end
 
+-- ============================================================
+-- MAIN LOOP
+-- ============================================================
 function mainLoop()
     while State.running do
         if not State.retrieveBusy and not State.farmingPaused then
