@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PNB LOGIC (Growlauncher) – untuk CONQUEROR HUB
+-- AUTO PNB LOGIC (Growlauncher) – untuk CONQUEROR HUB (PERFECT)
 -- ============================================================
 local pref = require("preferences")
 local saved = pref:new("auto_farm_controller.json")
@@ -187,11 +187,6 @@ function dropWithShift(itemID, amount, baseX, baseY)
         if after < before then
             State.currentDropX = curX
             return true
-        end
-        local waitStart = getTime()
-        while getTime() - waitStart < 2000 do
-            if tileFullTriggered then break end
-            sleep(100)
         end
         curX = curX - 1
     end
