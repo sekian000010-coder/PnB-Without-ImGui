@@ -23,7 +23,7 @@ end
 
 function _G.startFarm()
     if State.running then return end
-    loadConfig()  -- <-- BACA ULANG CONFIG
+    loadConfig()
     State.running = true
     State.retrieveBusy = false
     State.breakCount = 0
@@ -70,7 +70,6 @@ function loadConfig()
     }
 end
 
--- Panggil sekali di awal
 loadConfig()
 
 -- ============================================================
@@ -105,10 +104,431 @@ function updateBreakCounter()
 end
 
 -- ============================================================
--- FUNGSI UMUM (getLocalPos, invCount, safeWarp, safeMove...)
+-- FUNGSI UMUM
 -- ============================================================
--- (salin seluruh fungsi dari script sebelumnya, tidak ada yang diubah)
+function getLocalPos()
+    local p = getLocal()
+    return p and math.floor(p.posX / 32), p and math.floor(p.posY / 32) or 0, 0
+end
+
+function invCount(itemID)
+    for _, v in pairs(getInventory()) do
+        if v.id == itemID then return v.amount end
+    end
+    return 0
+end
+
+function safeWarp(worldStr)
+    local w, d = worldStr:match("([^|]+)|?(.*)")
+    if d == "" or d == nil then d = "0" end
+    if string.lower(GetWorldName()) == string.lower(w) then return true end
+    for _ = 1, 3 do
+        sendPacket(3, "action|join_request\nname|"..w.."|"..d.."\ninvitedWorld|0")
+        sleep(3000)
+        for _ = 1, 20 do
+            if string.lower(GetWorldName()) == string.lower(w) then
+                sleep(1000)
+                return true
+            end
+            sleep(200)
+        end
+    end
+    return false
+end
+
+function safeMove(x, y)
+    for _ = 1, 2 do
+        local px, py = getLocalPos()
+        if px == x and py == y then return true end
+        FindPath(x, y)
+        sleep(100)
+        local start = getTime()
+        while getTime() - start < 5000 do
+            px, py = getLocalPos()
+            if px == x and py == y then
+                sleep(200)
+                return true
+            end
+            sleep(100)
+        end
+        sleep(500)
+    end
+    return false
+end
+
 -- ============================================================
+-- TRIGGER TILE PENUH (GLOBAL) + AUTO GESER KIRI
+-- ============================================================
+local tileFullTriggered = false
+
+addHook(function(var)
+    local v1 = var.v1 or ""
+    local v2 = var.v2 or ""
+    if v1 == "OnTextOverlay" or v1 == "OnConsoleMessage" then
+        if v2:find("You can't drop that here") then
+            tileFullTriggered = true
+            local p = getLocal()
+            if p then
+                local curX = math.floor(p.posX / 32)
+                local curY = math.floor(p.posY / 32)
+                local targetX = curX - 1
+                if targetX >= 0 then
+                    FindPath(targetX, curY)
+                    sleep(300)
+                end
+            end
+        end
+    end
+    return false
+end, "onVariant")
+
+-- ============================================================
+-- DROP DENGAN TRIGGER SAJA
+-- ============================================================
+function dropWithShift(itemID, amount, baseX, baseY)
+    if amount <= 0 then return false end
+    local curX = baseX
+    while curX >= 0 do
+        if not safeMove(curX, baseY) then return false end
+        local before = invCount(itemID)
+        if before < amount then return false end
+
+        tileFullTriggered = false
+
+        sendPacket(2, "action|drop\nitemID|"..itemID)
+        sleep(500)
+        sendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|"..itemID.."|\ncount|"..amount)
+        sleep(300)
+
+        local after = before
+        for _ = 1, 20 do
+            sleep(100)
+            after = invCount(itemID)
+            if after < before then break end
+        end
+
+        if after < before then
+            State.currentDropX = curX
+            return true
+        end
+
+        local waitStart = getTime()
+        while getTime() - waitStart < 2000 do
+            if tileFullTriggered then break end
+            sleep(100)
+        end
+
+        curX = curX - 1
+    end
+    return false
+end
+
+function dropAllSeed()
+    local seedInv = invCount(ITEMS.SEED_ID)
+    if seedInv == 0 then return true end
+    while seedInv >= 200 do
+        if not dropWithShift(ITEMS.SEED_ID, 200, State.currentDropX, Config.gaiaDropY) then return false end
+        seedInv = invCount(ITEMS.SEED_ID)
+        sleep(500)
+    end
+    if seedInv > 0 then
+        if not dropWithShift(ITEMS.SEED_ID, seedInv, State.currentDropX, Config.gaiaDropY) then return false end
+    end
+    return true
+end
+
+-- ============================================================
+-- DIALOG TERPISAH (GAIA & UT)
+-- ============================================================
+local gaiaDialogData = { stock = 0, tilex = 0, tiley = 0, ready = false }
+local utDialogData   = { stock = 0, tilex = 0, tiley = 0, ready = false }
+
+addHook(function(var)
+    if var.v1 ~= "OnDialogRequest" or not var.v2 then return false end
+    local txt = var.v2
+    local isGaia = txt:find("end_dialog|"..ITEMS.GAIA_DIALOG)
+    local isUT   = txt:find("end_dialog|"..ITEMS.UT_DIALOG)
+    if not isGaia and not isUT then return false end
+
+    local tilex = txt:match("embed_data|tilex|(%d+)")
+    local tiley = txt:match("embed_data|tiley|(%d+)")
+    local stock = tonumber(txt:match("contains%s+(%d+)")) or 0
+    if tilex and tiley then
+        if isGaia then
+            gaiaDialogData.stock = stock
+            gaiaDialogData.tilex = tonumber(tilex)
+            gaiaDialogData.tiley = tonumber(tiley)
+            gaiaDialogData.ready = true
+        else
+            utDialogData.stock = stock
+            utDialogData.tilex = tonumber(tilex)
+            utDialogData.tiley = tonumber(tiley)
+            utDialogData.ready = true
+        end
+    end
+    return false
+end, "onVariant")
+
+function waitForGaiaDialog(timeout)
+    local start = getTime()
+    while getTime() - start < timeout do
+        if gaiaDialogData.ready then return true end
+        sleep(50)
+    end
+    return false
+end
+
+function waitForUTDialog(timeout)
+    local start = getTime()
+    while getTime() - start < timeout do
+        if utDialogData.ready then return true end
+        sleep(50)
+    end
+    return false
+end
+
+-- ============================================================
+-- RETRIEVE UT & GAIA
+-- ============================================================
+function retrieveUT()
+    if not Config.utEnabled or State.retrieveBusy or not State.running then return "UT_NOT_FOUND" end
+    State.retrieveBusy = true
+    pauseFarm()
+
+    local utX, utY = nil, nil
+    for _, t in pairs(getTiles()) do
+        if t and t.fg == ITEMS.UT_ID then utX, utY = t.x, t.y break end
+    end
+    if not utX then State.retrieveBusy = false; return "UT_NOT_FOUND" end
+
+    if not safeMove(utX, utY - 1) then State.retrieveBusy = false; return "UT_ERROR" end
+
+    utDialogData.ready = false
+    local p = getLocal()
+    sendPacketRaw(false, { type = 3, value = 32, px = utX, py = utY, x = p.posX, y = p.posY })
+
+    if not waitForUTDialog(3000) or not utDialogData.ready then
+        State.retrieveBusy = false
+        return "UT_EMPTY"
+    end
+
+    if utDialogData.stock == 0 then State.retrieveBusy = false; return "UT_EMPTY" end
+
+    local before = invCount(ITEMS.BLOCK_ID)
+    local take = math.min(utDialogData.stock, 200 - before)
+    if take > 0 then
+        local p1 = string.format(
+            "action|dialog_return\ndialog_name|%s\ntilex|%d|\ntiley|%d|\nbuttonClicked|retrieveitem\n\nchk_enablesucking|1",
+            ITEMS.UT_DIALOG, utDialogData.tilex, utDialogData.tiley)
+        sendPacket(2, p1)
+        sleep(300)
+        local p2 = string.format(
+            "action|dialog_return\ndialog_name|itemremovedfromsucker\ntilex|%d|\ntiley|%d|\nitemtoremove|%d",
+            utDialogData.tilex, utDialogData.tiley, take)
+        sendPacket(2, p2)
+        sleep(500)
+
+        local after = before
+        for _ = 1, 20 do
+            sleep(100)
+            after = invCount(ITEMS.BLOCK_ID)
+            if after > before then break end
+        end
+        State.retrieveBusy = false
+        if after > before then return "UT_RETRIEVED" else return "UT_EMPTY" end
+    else
+        State.retrieveBusy = false
+        return "UT_EMPTY"
+    end
+end
+
+function retrieveGaia()
+    if not Config.gaiaEnabled or State.retrieveBusy or not State.running then return false end
+    State.retrieveBusy = true
+    pauseFarm()
+
+    if not dropAllSeed() then State.retrieveBusy = false; return false end
+
+    local gaiaX, gaiaY = nil, nil
+    for _, t in pairs(getTiles()) do
+        if t and t.fg == ITEMS.GAIA_ID then gaiaX, gaiaY = t.x, t.y break end
+    end
+    if not gaiaX then State.retrieveBusy = false; return false end
+
+    while State.running do
+        if not safeMove(gaiaX, gaiaY - 1) then break end
+        gaiaDialogData.ready = false
+        local p = getLocal()
+        sendPacketRaw(false, { type = 3, value = 32, px = gaiaX, py = gaiaY, x = p.posX, y = p.posY })
+        if not waitForGaiaDialog(3000) or not gaiaDialogData.ready then break end
+        local stock = gaiaDialogData.stock
+        if stock <= 0 then break end
+
+        local curInv = invCount(ITEMS.SEED_ID)
+        local take = math.min(stock, 200 - curInv)
+        if take > 0 then
+            local p1 = string.format(
+                "action|dialog_return\ndialog_name|%s\ntilex|%d|\ntiley|%d|\nbuttonClicked|retrieveitem\n\nchk_enablesucking|1",
+                ITEMS.GAIA_DIALOG, gaiaDialogData.tilex, gaiaDialogData.tiley)
+            sendPacket(2, p1)
+            sleep(300)
+            local p2 = string.format(
+                "action|dialog_return\ndialog_name|itemremovedfromsucker\ntilex|%d|\ntiley|%d|\nitemtoremove|%d",
+                gaiaDialogData.tilex, gaiaDialogData.tiley, take)
+            sendPacket(2, p2)
+            sleep(500)
+            if not dropWithShift(ITEMS.SEED_ID, take, State.currentDropX, Config.gaiaDropY) then
+                growtopia.notify("Drop seed gagal")
+                break
+            end
+        end
+    end
+
+    State.retrieveBusy = false
+    return true
+end
+
+-- ============================================================
+-- OBJECT COLLECTOR
+-- ============================================================
+local function collectBlockFromGround()
+    local objects = getObjectList()
+    if not objects or #objects == 0 then return false end
+    local targets = {}
+    for _, obj in ipairs(objects) do
+        if obj.itemid == ITEMS.BLOCK_ID and obj.amount > 0 then
+            table.insert(targets, { x = obj.pos.x // 32, y = obj.pos.y // 32 })
+        end
+    end
+    if #targets == 0 then return false end
+    local before = invCount(ITEMS.BLOCK_ID)
+    for _, target in ipairs(targets) do
+        if safeMove(target.x, target.y) then
+            sleep(800)
+            local after = invCount(ITEMS.BLOCK_ID)
+            if after > before then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- ============================================================
+-- KONTROL POSISI & FARM
+-- ============================================================
+function savePosition()
+    State.startWorld = GetWorldName()
+    State.startX, State.startY = getLocalPos()
+end
+
+function ensurePosition()
+    for _ = 1, 10 do
+        local curWorld = GetWorldName()
+        local cx, cy = getLocalPos()
+        if curWorld == State.startWorld and cx == State.startX and cy == State.startY then
+            sleep(300)
+            cx, cy = getLocalPos()
+            if cx == State.startX and cy == State.startY then return true end
+        end
+        if not safeWarp(State.startWorld) then sleep(1000)
+        else
+            if safeMove(State.startX, State.startY) then
+                sleep(300)
+                if getLocalPos() == State.startX and getLocalPos() == State.startY then return true end
+            end
+        end
+        sleep(1000)
+    end
+    return false
+end
+
+function returnToFarm()
+    if ensurePosition() then
+        if not Config.onlyRetrieve then setFarmState(true) end
+        return true
+    else
+        growtopia.notify("Gagal kembali ke posisi awal")
+        return false
+    end
+end
+
+function getFarmState()
+    local ok, val = pcall(getValue, 0, AUTOFARM_ALIAS)
+    return ok and val or false
+end
+
+function setFarmState(on)
+    local current = getFarmState()
+    if on and not current then
+        editValue(AUTOFARM_ALIAS, true)
+        sleep(300)
+        State.farmingPaused = false
+    elseif not on and current then
+        editValue(AUTOFARM_ALIAS, false)
+        sleep(300)
+        State.farmingPaused = true
+    end
+end
+
+function pauseFarm()
+    if not State.farmingPaused then setFarmState(false) sleep(300) end
+end
+
+function checkSeedFull()
+    if State.retrieveBusy then return end
+    local seedInv = invCount(ITEMS.SEED_ID)
+    if seedInv >= 200 and Config.gaiaEnabled then
+        pauseFarm()
+        dropWithShift(ITEMS.SEED_ID, seedInv, State.currentDropX, Config.gaiaDropY)
+        returnToFarm()
+        sleep(500)
+    end
+end
+
+-- ============================================================
+-- MAIN LOOP
+-- ============================================================
+function mainLoop()
+    while State.running do
+        if not State.retrieveBusy and not State.farmingPaused then
+            updateBreakCounter()
+            checkSeedFull()
+
+            local blockInv = invCount(ITEMS.BLOCK_ID)
+
+            if blockInv == 0 and Config.utEnabled and not State.retrieveBusy then
+                local utStatus = retrieveUT()
+                sleep(500)
+                blockInv = invCount(ITEMS.BLOCK_ID)
+
+                if (utStatus == "UT_EMPTY" or utStatus == "UT_NOT_FOUND") and blockInv == 0 then
+                    if Config.enableObjectCollector then
+                        collectBlockFromGround()
+                        sleep(300)
+                        blockInv = invCount(ITEMS.BLOCK_ID)
+                    end
+                end
+
+                if blockInv > 0 and blockInv < 200 and Config.enableObjectCollector then
+                    collectBlockFromGround()
+                    sleep(300)
+                end
+
+                returnToFarm()
+            end
+
+            if Config.gaiaEnabled and State.breakCount >= Config.breakThreshold and not State.retrieveBusy then
+                growtopia.notify("Threshold reached! Retrieve GAIA...")
+                retrieveGaia()
+                State.breakCount = 0
+                sleep(500)
+                returnToFarm()
+            end
+        end
+        sleep(200)
+    end
+end
 
 -- ============================================================
 -- INISIALISASI
