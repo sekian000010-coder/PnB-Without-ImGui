@@ -1,69 +1,50 @@
 -- ============================================================
--- AUTO PNB LOGIC (Growlauncher) – untuk CONQUEROR HUB (PERFECT)
+-- AUTO FARM CONTROLLER (PNB) – TRIGGER‑BASED DROP (FINAL)
+-- ============================================================
+-- dropWithShift sekarang MURNI menunggu trigger "You can't drop that here"
+-- untuk memutuskan apakah tile penuh.
+-- Tidak ada lagi max tile loop, digantikan oleh trigger + FindPath X-1.
 -- ============================================================
 local pref = require("preferences")
+local json = require("json")
 local saved = pref:new("auto_farm_controller.json")
 
-local Config = {}
-local State = {}
-local ITEMS = {}
+local Config = {
+    breakThreshold = tonumber(saved:get("break_threshold", 10)),
+    xCoords = tonumber(saved:get("x_coords", 2)),
+    yCoords = tonumber(saved:get("y_coords", -1)),
+    gaiaEnabled = saved:get("gaia_enabled", false),
+    gaiaDropX = tonumber(saved:get("gaia_drop_x", 52)),
+    gaiaDropY = tonumber(saved:get("gaia_drop_y", 23)),
+    utEnabled = saved:get("ut_enabled", false),
+    utDropX = tonumber(saved:get("ut_drop_x", 0)),
+    utDropY = tonumber(saved:get("ut_drop_y", 0)),
+    onlyRetrieve = saved:get("only_retrieve", false),
+    enableObjectCollector = saved:get("enable_object_collector", true),
+}
+
+local State = {
+    running = false,
+    retrieveBusy = false,
+    farmingPaused = false,
+    breakCount = 0,
+    startWorld = "",
+    startX = 0,
+    startY = 0,
+    currentDropX = Config.gaiaDropX,
+}
+
+local ITEMS = {
+    GAIA_ID = 6946,
+    UT_ID = 6948,
+    BLOCK_ID = 5666,
+    SEED_ID = 5667,
+    GAIA_DIALOG = "itemsucker_seed",
+    UT_DIALOG = "itemsucker_block",
+}
+
 local AUTOFARM_ALIAS = "autofarm_start"
-
-function _G.setPnbConfig(key, value)
-    if Config[key] ~= nil then
-        Config[key] = value
-        saved:set(key, value)
-        saved:save()
-    end
-end
-
-function _G.startFarm()
-    if State.running then return end
-    loadConfig()
-    State.running = true
-    State.retrieveBusy = false
-    State.breakCount = 0
-    State.currentDropX = Config.gaiaDropX
-    savePosition()
-    initFarmArea()
-    if not Config.onlyRetrieve then setFarmState(true) end
-    runThread(mainLoop)
-    growtopia.notify("Auto PnB Started!!")
-end
-
-function _G.stopFarm()
-    State.running = false
-    State.retrieveBusy = false
-    setFarmState(false)
-    resetFarmArea()
-    growtopia.notify("Auto PnB stopped")
-end
-
-function loadConfig()
-    Config = {
-        breakThreshold = tonumber(saved:get("break_threshold", 10)),
-        xCoords = tonumber(saved:get("x_coords", 2)),
-        yCoords = tonumber(saved:get("y_coords", -1)),
-        gaiaEnabled = saved:get("gaia_enabled", false),
-        gaiaDropX = tonumber(saved:get("gaia_drop_x", 52)),
-        gaiaDropY = tonumber(saved:get("gaia_drop_y", 23)),
-        utEnabled = saved:get("ut_enabled", false),
-        utDropX = tonumber(saved:get("ut_drop_x", 0)),
-        utDropY = tonumber(saved:get("ut_drop_y", 0)),
-        onlyRetrieve = saved:get("only_retrieve", false),
-        enableObjectCollector = saved:get("enable_object_collector", true),
-    }
-    ITEMS = {
-        GAIA_ID = 6946,
-        UT_ID = 6948,
-        BLOCK_ID = 5666,
-        SEED_ID = 5667,
-        GAIA_DIALOG = "itemsucker_seed",
-        UT_DIALOG = "itemsucker_block",
-    }
-end
-
-loadConfig()
+local lastUIUpdate = 0
 
 -- ============================================================
 -- AREA FARM & BREAK COUNTER
@@ -91,6 +72,7 @@ function updateBreakCounter()
         local has = (t and t.fg == ITEMS.BLOCK_ID)
         if farmTileState[x] and not has then
             State.breakCount = State.breakCount + 1
+            updateStatus(false)
         end
         farmTileState[x] = has
     end
@@ -176,7 +158,7 @@ addHook(function(var)
 end, "onVariant")
 
 -- ============================================================
--- DROP DENGAN TRIGGER SAJA
+-- DROP DENGAN TRIGGER SAJA (TIDAK ADA MAX TILE)
 -- ============================================================
 function dropWithShift(itemID, amount, baseX, baseY)
     if amount <= 0 then return false end
@@ -185,23 +167,39 @@ function dropWithShift(itemID, amount, baseX, baseY)
         if not safeMove(curX, baseY) then return false end
         local before = invCount(itemID)
         if before < amount then return false end
-        tileFullTriggered = false
+
+        tileFullTriggered = false   -- reset flag sebelum drop
+
         sendPacket(2, "action|drop\nitemID|"..itemID)
         sleep(500)
         sendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|"..itemID.."|\ncount|"..amount)
         sleep(300)
+
+        -- Cek inventory setelah drop
         local after = before
         for _ = 1, 20 do
             sleep(100)
             after = invCount(itemID)
             if after < before then break end
         end
+
         if after < before then
+            -- Inventory benar‑benar berkurang → sukses
             State.currentDropX = curX
             return true
         end
+
+        -- Inventory belum berkurang → tunggu trigger tile penuh
+        local waitStart = getTime()
+        while getTime() - waitStart < 2000 do
+            if tileFullTriggered then break end
+            sleep(100)
+        end
+
+        -- Geser ke kiri (entah karena trigger atau timeout)
         curX = curX - 1
     end
+    LogToConsole("[PNB] Gagal drop – tidak ada tile tersedia")
     return false
 end
 
@@ -231,6 +229,7 @@ addHook(function(var)
     local isGaia = txt:find("end_dialog|"..ITEMS.GAIA_DIALOG)
     local isUT   = txt:find("end_dialog|"..ITEMS.UT_DIALOG)
     if not isGaia and not isUT then return false end
+
     local tilex = txt:match("embed_data|tilex|(%d+)")
     local tiley = txt:match("embed_data|tiley|(%d+)")
     local stock = tonumber(txt:match("contains%s+(%d+)")) or 0
@@ -269,7 +268,7 @@ function waitForUTDialog(timeout)
 end
 
 -- ============================================================
--- RETRIEVE UT (DIPERBAIKI – COBA 4 ARAH)
+-- RETRIEVE UT & GAIA (TANPA RESUME AUTOFARM)
 -- ============================================================
 function retrieveUT()
     if not Config.utEnabled or State.retrieveBusy or not State.running then return "UT_NOT_FOUND" end
@@ -282,29 +281,19 @@ function retrieveUT()
     end
     if not utX then State.retrieveBusy = false; return "UT_NOT_FOUND" end
 
-    -- Coba 4 arah: bawah, kiri, kanan, atas
-    local offsets = { {0,-1}, {-1,0}, {1,0}, {0,1} }
-    local moved = false
-    for _, off in ipairs(offsets) do
-        local tx, ty = utX + off[1], utY + off[2]
-        if safeMove(tx, ty) then
-            moved = true
-            break
-        end
-    end
-    if not moved then
-        State.retrieveBusy = false
-        return "UT_ERROR"
-    end
+    if not safeMove(utX, utY - 1) then State.retrieveBusy = false; return "UT_ERROR" end
 
     utDialogData.ready = false
     local p = getLocal()
     sendPacketRaw(false, { type = 3, value = 32, px = utX, py = utY, x = p.posX, y = p.posY })
+
     if not waitForUTDialog(3000) or not utDialogData.ready then
         State.retrieveBusy = false
         return "UT_EMPTY"
     end
+
     if utDialogData.stock == 0 then State.retrieveBusy = false; return "UT_EMPTY" end
+
     local before = invCount(ITEMS.BLOCK_ID)
     local take = math.min(utDialogData.stock, 200 - before)
     if take > 0 then
@@ -318,6 +307,7 @@ function retrieveUT()
             utDialogData.tilex, utDialogData.tiley, take)
         sendPacket(2, p2)
         sleep(500)
+
         local after = before
         for _ = 1, 20 do
             sleep(100)
@@ -332,19 +322,19 @@ function retrieveUT()
     end
 end
 
--- ============================================================
--- RETRIEVE GAIA (TIDAK BERUBAH)
--- ============================================================
 function retrieveGaia()
     if not Config.gaiaEnabled or State.retrieveBusy or not State.running then return false end
     State.retrieveBusy = true
     pauseFarm()
+
     if not dropAllSeed() then State.retrieveBusy = false; return false end
+
     local gaiaX, gaiaY = nil, nil
     for _, t in pairs(getTiles()) do
         if t and t.fg == ITEMS.GAIA_ID then gaiaX, gaiaY = t.x, t.y break end
     end
     if not gaiaX then State.retrieveBusy = false; return false end
+
     while State.running do
         if not safeMove(gaiaX, gaiaY - 1) then break end
         gaiaDialogData.ready = false
@@ -353,6 +343,7 @@ function retrieveGaia()
         if not waitForGaiaDialog(3000) or not gaiaDialogData.ready then break end
         local stock = gaiaDialogData.stock
         if stock <= 0 then break end
+
         local curInv = invCount(ITEMS.SEED_ID)
         local take = math.min(stock, 200 - curInv)
         if take > 0 then
@@ -367,11 +358,12 @@ function retrieveGaia()
             sendPacket(2, p2)
             sleep(500)
             if not dropWithShift(ITEMS.SEED_ID, take, State.currentDropX, Config.gaiaDropY) then
-                growtopia.notify("Drop seed gagal")
+                growtopia.notify("Drop seed gagal, hentikan retrieve GAIA")
                 break
             end
         end
     end
+
     State.retrieveBusy = false
     return true
 end
@@ -394,7 +386,10 @@ local function collectBlockFromGround()
         if safeMove(target.x, target.y) then
             sleep(800)
             local after = invCount(ITEMS.BLOCK_ID)
-            if after > before then return true end
+            if after > before then
+                LogToConsole("Object Collector: ambil " .. (after - before) .. " block")
+                return true
+            end
         end
     end
     return false
@@ -461,6 +456,24 @@ function pauseFarm()
     if not State.farmingPaused then setFarmState(false) sleep(300) end
 end
 
+function updateStatus(forceUpdate)
+    local now = getTime()
+    if not forceUpdate and (now - lastUIUpdate) < 1000 then return end
+    lastUIUpdate = now
+    local items = {
+        {State.running and "Running" or "Stopped"},
+        {"Mode: "..(Config.onlyRetrieve and "Only Retrieve" or "Auto Farm")},
+        {"Break: "..State.breakCount.." / "..Config.breakThreshold},
+        {"Block: "..invCount(ITEMS.BLOCK_ID).." / 200"},
+        {"Seed: "..invCount(ITEMS.SEED_ID).." / 200"},
+        {"GAIA: "..(Config.gaiaEnabled and "ON" or "OFF")},
+        {"UT: "..(Config.utEnabled and "ON" or "OFF")},
+        {"Autofarm: "..(getFarmState() and "ON" or "OFF")},
+        {"Pos: "..State.startWorld.." "..State.startX..","..State.startY}
+    }
+    pcall(editValue, "status_display", json:encode(items))
+end
+
 function checkSeedFull()
     if State.retrieveBusy then return end
     local seedInv = invCount(ITEMS.SEED_ID)
@@ -480,24 +493,31 @@ function mainLoop()
         if not State.retrieveBusy and not State.farmingPaused then
             updateBreakCounter()
             checkSeedFull()
+
             local blockInv = invCount(ITEMS.BLOCK_ID)
+
             if blockInv == 0 and Config.utEnabled and not State.retrieveBusy then
                 local utStatus = retrieveUT()
                 sleep(500)
                 blockInv = invCount(ITEMS.BLOCK_ID)
+
                 if (utStatus == "UT_EMPTY" or utStatus == "UT_NOT_FOUND") and blockInv == 0 then
                     if Config.enableObjectCollector then
+                        LogToConsole("UT kosong, mencari block di ground...")
                         collectBlockFromGround()
                         sleep(300)
                         blockInv = invCount(ITEMS.BLOCK_ID)
                     end
                 end
+
                 if blockInv > 0 and blockInv < 200 and Config.enableObjectCollector then
                     collectBlockFromGround()
                     sleep(300)
                 end
+
                 returnToFarm()
             end
+
             if Config.gaiaEnabled and State.breakCount >= Config.breakThreshold and not State.retrieveBusy then
                 growtopia.notify("Threshold reached! Retrieve GAIA...")
                 retrieveGaia()
@@ -510,5 +530,126 @@ function mainLoop()
     end
 end
 
-LogToConsole("[PNB] Logic Loaded")
+-- ============================================================
+-- START / STOP
+-- ============================================================
+function startFarm()
+    if State.running then return end
+    State.running = true
+    State.retrieveBusy = false
+    State.breakCount = 0
+    State.currentDropX = Config.gaiaDropX
+    savePosition()
+    initFarmArea()
+    if not Config.onlyRetrieve then setFarmState(true) end
+    runThread(mainLoop)
+    growtopia.notify("Auto Farm started")
+    updateStatus(true)
+end
+
+function stopFarm()
+    State.running = false
+    State.retrieveBusy = false
+    setFarmState(false)
+    resetFarmArea()
+    growtopia.notify("Auto Farm stopped")
+    updateStatus(true)
+end
+
+-- ============================================================
+-- UI MODULE
+-- ============================================================
+local ui = UserInterface.new("Auto Farm Controller", "Agriculture")
+ui:addLabelApp("Auto Farm Controller", "Agriculture")
+ui:addTooltip("Info", "PNB + GAIA + UT + Object Collector", "Info", false)
+ui:addDivider()
+ui:addLabelApp("Status", "Dashboard")
+ui:addDisplayList("", "[]", "status_display")
+ui:addDivider()
+
+local pnbGroup = ui:addExpandableToggle("PNB Settings", true, "pnb_group", false, true)
+ui:addChildInputInt(pnbGroup.list_child, "Break Threshold", tostring(Config.breakThreshold), "", "", "Numbers", "break_threshold")
+ui:addChildToggle(pnbGroup.list_child, "Only Retrieve Mode", Config.onlyRetrieve, "only_retrieve", true)
+ui:addChildToggle(pnbGroup.list_child, "Enable Object Collector", Config.enableObjectCollector, "enable_object_collector", true)
+
+local gaiaGroup = ui:addExpandableToggle("GAIA", true, "gaia_group", false, true)
+ui:addChildToggle(gaiaGroup.list_child, "Enable GAIA", Config.gaiaEnabled, "gaia_enable", true)
+ui:addChildInputInt(gaiaGroup.list_child, "GAIA Drop X", tostring(Config.gaiaDropX), "", "", "LocationOn", "gaia_dropx")
+ui:addChildInputInt(gaiaGroup.list_child, "GAIA Drop Y", tostring(Config.gaiaDropY), "", "", "LocationOn", "gaia_dropy")
+
+local utGroup = ui:addExpandableToggle("UT", true, "ut_group", false, true)
+ui:addChildToggle(utGroup.list_child, "Enable UT", Config.utEnabled, "ut_enable", true)
+ui:addChildInputInt(utGroup.list_child, "UT Drop X", tostring(Config.utDropX), "", "", "LocationOn", "ut_dropx")
+ui:addChildInputInt(utGroup.list_child, "UT Drop Y", tostring(Config.utDropY), "", "", "LocationOn", "ut_dropy")
+
+ui:addDivider()
+ui:addLabelApp("Control", "PlayArrow")
+ui:addToggleButton("Start", false, "toggle_start")
+ui:addButton("Stop", "btn_stop")
+ui:addButton("Refresh Status", "btn_refresh")
+ui:addButton("Check Status", "btn_check_status")
+ui:addDivider()
+
+-- ========== PERUBAHAN: MASUK KE CONQUEROR HUB ==========
+-- addCategory("Auto Farm Controller", "Agriculture")   -- DIHAPUS
+addIntoModule(ui:generateJSON(), "CONQUEROR HUB")     -- DIGANTI
+-- =========================================================
+
+-- ============================================================
+-- VALUE LISTENER
+-- ============================================================
+addHook(function(type, name, value)
+    if name == "break_threshold" then
+        Config.breakThreshold = tonumber(value) or 10
+        saved:set("break_threshold", Config.breakThreshold) saved:save() updateStatus(true)
+    elseif name == "only_retrieve" then
+        Config.onlyRetrieve = value saved:set("only_retrieve", value) saved:save()
+        if State.running then
+            if value then setFarmState(false) else setFarmState(true) end
+        end
+        updateStatus(true)
+    elseif name == "enable_object_collector" then
+        Config.enableObjectCollector = value saved:set("enable_object_collector", value) saved:save() updateStatus(true)
+    elseif name == "gaia_enable" then
+        Config.gaiaEnabled = value saved:set("gaia_enabled", value) saved:save() updateStatus(true)
+    elseif name == "gaia_dropx" then
+        Config.gaiaDropX = tonumber(value) or 52 saved:set("gaia_drop_x", Config.gaiaDropX) saved:save()
+        State.currentDropX = Config.gaiaDropX
+    elseif name == "gaia_dropy" then
+        Config.gaiaDropY = tonumber(value) or 23 saved:set("gaia_drop_y", Config.gaiaDropY) saved:save()
+    elseif name == "ut_enable" then
+        Config.utEnabled = value saved:set("ut_enabled", value) saved:save() updateStatus(true)
+    elseif name == "ut_dropx" then
+        Config.utDropX = tonumber(value) or 0 saved:set("ut_drop_x", Config.utDropX) saved:save()
+    elseif name == "ut_dropy" then
+        Config.utDropY = tonumber(value) or 0 saved:set("ut_drop_y", Config.utDropY) saved:save()
+    elseif name == "toggle_start" then
+        if value then startFarm() else stopFarm() end
+        updateStatus()
+    elseif name == "btn_stop" then stopFarm() updateStatus()
+    elseif name == "btn_refresh" then updateStatus(true) growtopia.notify("Status refreshed")
+    elseif name == "btn_check_status" then
+        local blockInv = invCount(ITEMS.BLOCK_ID)
+        local seedInv = invCount(ITEMS.SEED_ID)
+        local farmState = getFarmState()
+        local msg = string.format(
+            "Break: %d/%d | Block: %d | Seed: %d | Farm: %s | GAIA: %s | UT: %s",
+            State.breakCount, Config.breakThreshold, blockInv, seedInv,
+            farmState and "ON" or "OFF",
+            Config.gaiaEnabled and "ON" or "OFF",
+            Config.utEnabled and "ON" or "OFF"
+        )
+        growtopia.notify(msg)
+    end
+end, "onValue")
+
+-- ============================================================
+-- INISIALISASI
+-- ============================================================
+runCoroutine(function()
+    sleep(1000)
+    updateStatus(true)
+end)
+
+growtopia.notify("Auto Farm Controller ready (Trigger‑Only Drop)")
 applyHook()
