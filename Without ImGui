@@ -20,6 +20,7 @@ local Config = {
     utDropX = tonumber(saved:get("ut_drop_x", 0)),
     utDropY = tonumber(saved:get("ut_drop_y", 0)),
     onlyRetrieve = saved:get("only_retrieve", false),
+    enableObjectCollector = saved:get("enable_object_collector", true),
 }
 
 local State = {
@@ -368,10 +369,9 @@ function retrieveGaia()
 end
 
 -- ============================================================
--- OBJECT COLLECTOR (SELALU AKTIF)
+-- OBJECT COLLECTOR
 -- ============================================================
 local function collectBlockFromGround()
-    -- Object collector selalu berjalan tanpa perlu config
     local objects = getObjectList()
     if not objects or #objects == 0 then return false end
     local targets = {}
@@ -502,14 +502,15 @@ function mainLoop()
                 blockInv = invCount(ITEMS.BLOCK_ID)
 
                 if (utStatus == "UT_EMPTY" or utStatus == "UT_NOT_FOUND") and blockInv == 0 then
-                    -- Object Collector selalu berjalan
-                    LogToConsole("UT kosong, mencari block di ground...")
-                    collectBlockFromGround()
-                    sleep(300)
-                    blockInv = invCount(ITEMS.BLOCK_ID)
+                    if Config.enableObjectCollector then
+                        LogToConsole("UT kosong, mencari block di ground...")
+                        collectBlockFromGround()
+                        sleep(300)
+                        blockInv = invCount(ITEMS.BLOCK_ID)
+                    end
                 end
 
-                if blockInv > 0 and blockInv < 200 then
+                if blockInv > 0 and blockInv < 200 and Config.enableObjectCollector then
                     collectBlockFromGround()
                     sleep(300)
                 end
@@ -569,6 +570,7 @@ ui:addDivider()
 local pnbGroup = ui:addExpandableToggle("PNB Settings", true, "pnb_group", false, true)
 ui:addChildInputInt(pnbGroup.list_child, "Break Threshold", tostring(Config.breakThreshold), "", "", "Numbers", "break_threshold")
 ui:addChildToggle(pnbGroup.list_child, "Only Retrieve Mode", Config.onlyRetrieve, "only_retrieve", true)
+ui:addChildToggle(pnbGroup.list_child, "Enable Object Collector", Config.enableObjectCollector, "enable_object_collector", true)
 
 local gaiaGroup = ui:addExpandableToggle("GAIA", true, "gaia_group", false, true)
 ui:addChildToggle(gaiaGroup.list_child, "Enable GAIA", Config.gaiaEnabled, "gaia_enable", true)
@@ -588,9 +590,8 @@ ui:addButton("Refresh Status", "btn_refresh")
 ui:addButton("Check Status", "btn_check_status")
 ui:addDivider()
 
--- ========== MASUK KE CONQUEROR HUB ==========
-addIntoModule(ui:generateJSON(), "CONQUEROR HUB")
--- =========================================================
+addCategory("Auto Farm Controller", "Agriculture")
+addIntoModule(ui:generateJSON(), "Auto Farm Controller")
 
 -- ============================================================
 -- VALUE LISTENER
@@ -605,6 +606,8 @@ addHook(function(type, name, value)
             if value then setFarmState(false) else setFarmState(true) end
         end
         updateStatus(true)
+    elseif name == "enable_object_collector" then
+        Config.enableObjectCollector = value saved:set("enable_object_collector", value) saved:save() updateStatus(true)
     elseif name == "gaia_enable" then
         Config.gaiaEnabled = value saved:set("gaia_enabled", value) saved:save() updateStatus(true)
     elseif name == "gaia_dropx" then
@@ -647,8 +650,4 @@ runCoroutine(function()
 end)
 
 growtopia.notify("Auto Farm Controller ready (Trigger‑Only Drop)")
-
--- ========== SIMPAN UI UNTUK LOADER ==========
-_G.pnbUI = ui:generateJSON()
-
 applyHook()
