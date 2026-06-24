@@ -569,8 +569,6 @@ ui:addDivider()
 local pnbGroup = ui:addExpandableToggle("PNB Settings", true, "pnb_group", false, true)
 ui:addChildInputInt(pnbGroup.list_child, "Break Threshold", tostring(Config.breakThreshold), "", "", "Numbers", "break_threshold")
 ui:addChildToggle(pnbGroup.list_child, "Only Retrieve Mode", Config.onlyRetrieve, "only_retrieve", true)
--- Label "Comming Soon!" setelah toggle Only Retrieve
-ui:addChildLabelApp(pnbGroup.list_child, "Comming Soon!", "Info")
 
 local gaiaGroup = ui:addExpandableToggle("GAIA", true, "gaia_group", false, true)
 ui:addChildToggle(gaiaGroup.list_child, "Enable GAIA", Config.gaiaEnabled, "gaia_enable", true)
@@ -650,7 +648,7 @@ end)
 
 growtopia.notify("Auto Farm Controller ready (Trigger‑Only Drop)")
 
--- ========== SIMPAN UI UNTUK LOADER (TANPA UNLOAD) ==========
+-- ========== SIMPAN UI UNTUK LOADER ==========
 _G.pnbUI = ui:generateJSON()
 
 applyHook()
