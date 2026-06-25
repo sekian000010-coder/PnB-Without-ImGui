@@ -559,7 +559,7 @@ end
 -- ============================================================
 -- UI MODULE
 -- ============================================================
-local ui = UserInterface.new("Auto Farm Controller", "Agriculture")
+local ui = UserInterface.new("CONQUEROR HUB", "Agriculture")
 ui:addLabelApp("Auto Farm Controller", "Agriculture")
 ui:addTooltip("Info", "PNB + GAIA + UT + Object Collector", "Info", false)
 ui:addDivider()
