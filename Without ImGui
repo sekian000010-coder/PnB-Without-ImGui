@@ -591,7 +591,7 @@ ui:addButton("Check Status", "btn_check_status")
 ui:addDivider()
 
 addCategory("Auto Farm Controller", "Agriculture")
-addIntoModule(ui:generateJSON(), "Auto Farm Controller")
+addIntoModule(ui:generateJSON(), "CONQUEROR HUB")
 
 -- ============================================================
 -- VALUE LISTENER
