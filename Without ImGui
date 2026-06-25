@@ -590,7 +590,7 @@ ui:addButton("Refresh Status", "btn_refresh")
 ui:addButton("Check Status", "btn_check_status")
 ui:addDivider()
 
-addCategory("CONQUEROR HUB", "Agriculture")
+addCategory("Auto Farm", "Agriculture")
 addIntoModule(ui:generateJSON(), "CONQUEROR HUB")
 
 -- ============================================================
