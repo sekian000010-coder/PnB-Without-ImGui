@@ -559,7 +559,7 @@ end
 -- ============================================================
 -- UI MODULE
 -- ============================================================
-local ui = UserInterface.new("CONQUEROR HUB", "Agriculture")
+local ui = UserInterface.new("Auto Farm", "Agriculture")
 ui:addLabelApp("Auto Farm Controller", "Agriculture")
 ui:addTooltip("Info", "PNB + GAIA + UT + Object Collector", "Info", false)
 ui:addDivider()
@@ -590,7 +590,7 @@ ui:addButton("Refresh Status", "btn_refresh")
 ui:addButton("Check Status", "btn_check_status")
 ui:addDivider()
 
-addCategory("Auto Farm", "Agriculture")
+addCategory("CONQUEROR HUB", "Agriculture")
 addIntoModule(ui:generateJSON(), "CONQUEROR HUB")
 
 -- ============================================================
